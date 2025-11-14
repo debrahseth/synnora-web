@@ -1,85 +1,69 @@
 // app/api/translate/route.js
+import { NextResponse } from "next/server";
+
 export async function POST(req) {
   try {
-    const body = await req.json();
-    const { text, lang } = body;
+    const { text, lang } = await req.json();
 
     if (!text) {
-      return new Response(JSON.stringify({ error: "No text provided" }), {
+      return new NextResponse(JSON.stringify({ error: "No text provided" }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
 
     const targetLang = lang || "en";
-    let translatedText = text;
 
-    // Only translate if target language is not English
-    if (targetLang !== "en") {
-      const apiKey = process.env.SMARTCAT_API_KEY;
-
-      if (!apiKey) {
-        return new Response(
-          JSON.stringify({ error: "Smartcat API key missing" }),
-          {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      const translationResponse = await fetch(
-        "https://api.smartcat.ai/v1/translate/text", // Smartcat Free Translate endpoint
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            sourceLanguage: "en",
-            targetLanguage: targetLang,
-            texts: [text], // Smartcat expects an array of strings
-          }),
-        }
+    // Ensure you have your API key in .env
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return new NextResponse(
+        JSON.stringify({ error: "OpenAI API key missing" }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
       );
-
-      // Read the response once as text
-      const translationText = await translationResponse.text();
-      let translationData;
-
-      // Attempt to parse JSON
-      try {
-        translationData = JSON.parse(translationText);
-      } catch (err) {
-        console.error("Smartcat response is not valid JSON:", translationText);
-        return new Response(
-          JSON.stringify({
-            error: "Invalid response from Smartcat API",
-            raw: translationText,
-          }),
-          { status: 500, headers: { "Content-Type": "application/json" } }
-        );
-      }
-
-      // Extract translated text
-      if (
-        translationData.translations &&
-        translationData.translations.length > 0
-      ) {
-        translatedText = translationData.translations[0].text;
-      } else {
-        return new Response(
-          JSON.stringify({
-            error: "Smartcat API returned no translation",
-            data: translationData,
-          }),
-          { status: 500, headers: { "Content-Type": "application/json" } }
-        );
-      }
     }
 
-    return new Response(
+    // Call OpenAI API for translation
+    const openaiRes = await fetch(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: `You are a helpful translator. Translate the user's text into ${targetLang}.`,
+            },
+            {
+              role: "user",
+              content: text,
+            },
+          ],
+          temperature: 0,
+        }),
+      }
+    );
+
+    const openaiData = await openaiRes.json();
+
+    if (!openaiData.choices || openaiData.choices.length === 0) {
+      return new NextResponse(
+        JSON.stringify({
+          error: "OpenAI returned no translation",
+          data: openaiData,
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    const translatedText = openaiData.choices[0].message.content.trim();
+
+    return new NextResponse(
       JSON.stringify({
         original: text,
         translated: translatedText,
@@ -88,8 +72,8 @@ export async function POST(req) {
       { status: 200, headers: { "Content-Type": "application/json" } }
     );
   } catch (err) {
-    console.error("API Error:", err);
-    return new Response(
+    console.error("Translation API error:", err);
+    return new NextResponse(
       JSON.stringify({ error: "Server error", details: err.message }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
